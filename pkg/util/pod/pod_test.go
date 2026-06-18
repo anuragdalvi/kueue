@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	testingpod "sigs.k8s.io/kueue/pkg/util/testingjobs/pod"
@@ -249,5 +250,72 @@ func TestIsTerminated(t *testing.T) {
 				t.Errorf("Unexpected Pod terminal\nwant: %v\ngot: %v\n", tc.wantTerminated, got)
 			}
 		})
+	}
+}
+
+func TestSpecShape(t *testing.T) {
+	podResources := &corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")},
+	}
+	cases := map[string]struct {
+		podSpec       *corev1.PodSpec
+		wantResources any
+		wantPresent   bool
+	}{
+		"pod-level resources omitted when unset": {
+			podSpec:     &corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}},
+			wantPresent: false,
+		},
+		"pod-level resources included when set": {
+			podSpec:       &corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}, Resources: podResources},
+			wantResources: podResources,
+			wantPresent:   true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, present := SpecShape(tc.podSpec)["resources"]
+			if present != tc.wantPresent {
+				t.Fatalf("Unexpected presence of \"resources\" key: want %v, got %v", tc.wantPresent, present)
+			}
+			if diff := cmp.Diff(tc.wantResources, got); diff != "" {
+				t.Errorf("Unexpected resources shape (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGenerateRoleHash(t *testing.T) {
+	withoutPodResources := &corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}
+	withPodResources := &corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "c"}},
+		Resources: &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		},
+	}
+
+	baseHash, err := GenerateRoleHash(withoutPodResources)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Adding pod-level resources must change the role hash.
+	podResourcesHash, err := GenerateRoleHash(withPodResources)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if baseHash == podResourcesHash {
+		t.Errorf("Expected differing role hashes for specs that differ in pod-level resources, got %q for both", baseHash)
+	}
+
+	// A spec without pod-level resources must hash identically regardless of the
+	// feature, preserving compatibility for pods created before this change.
+	sameHash, err := GenerateRoleHash(withoutPodResources.DeepCopy())
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if baseHash != sameHash {
+		t.Errorf("Expected stable role hash for a spec without pod-level resources, got %q and %q", baseHash, sameHash)
 	}
 }

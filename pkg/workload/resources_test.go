@@ -320,6 +320,37 @@ func TestAdjustResources(t *testing.T) {
 				).
 				Obj(),
 		},
+		"Apply pod-level limits to requests": {
+			wl: utiltestingapi.MakeWorkload("foo", "").
+				PodSets(
+					*utiltestingapi.MakePodSet("a", 1).
+						PodLevelLimit(corev1.ResourceCPU, "1").
+						PodLevelLimit(corev1.ResourceMemory, "1Gi").
+						Obj(),
+					*utiltestingapi.MakePodSet("b", 1).
+						PodLevelRequest(corev1.ResourceCPU, "2").
+						PodLevelLimit(corev1.ResourceCPU, "3").
+						PodLevelLimit(corev1.ResourceMemory, "1Gi").
+						Obj(),
+				).
+				Obj(),
+			wantWl: utiltestingapi.MakeWorkload("foo", "").
+				PodSets(
+					*utiltestingapi.MakePodSet("a", 1).
+						PodLevelLimit(corev1.ResourceCPU, "1").
+						PodLevelLimit(corev1.ResourceMemory, "1Gi").
+						PodLevelRequest(corev1.ResourceCPU, "1").
+						PodLevelRequest(corev1.ResourceMemory, "1Gi").
+						Obj(),
+					*utiltestingapi.MakePodSet("b", 1).
+						PodLevelRequest(corev1.ResourceCPU, "2").
+						PodLevelLimit(corev1.ResourceCPU, "3").
+						PodLevelLimit(corev1.ResourceMemory, "1Gi").
+						PodLevelRequest(corev1.ResourceMemory, "1Gi").
+						Obj(),
+				).
+				Obj(),
+		},
 		"Apply limits to requests": {
 			wl: utiltestingapi.MakeWorkload("foo", "").
 				PodSets(
@@ -515,6 +546,32 @@ func TestValidateResources(t *testing.T) {
 									Obj()).
 							Obj(),
 					).Obj(),
+			},
+		},
+		"valid workload with pod-level resources": {
+			workloadInfo: &Info{
+				Obj: utiltestingapi.MakeWorkload("alpha", metav1.NamespaceDefault).
+					PodSets(
+						*utiltestingapi.MakePodSet("a", 1).
+							PodLevelRequest(corev1.ResourceCPU, "100m").
+							PodLevelLimit(corev1.ResourceCPU, "200m").
+							Obj(),
+					).Obj(),
+			},
+		},
+		"invalid workload; pod-level requests exceed limits": {
+			workloadInfo: &Info{
+				Obj: utiltestingapi.MakeWorkload("alpha", metav1.NamespaceDefault).
+					PodSets(
+						*utiltestingapi.MakePodSet("a", 1).
+							PodLevelRequest(corev1.ResourceCPU, "300m").
+							PodLevelLimit(corev1.ResourceCPU, "200m").
+							Obj(),
+					).Obj(),
+			},
+			wantError: field.ErrorList{
+				field.Invalid(PodSetsPath.Index(0).Child("template").Child("spec").Child("resources"),
+					[]corev1.ResourceName{corev1.ResourceCPU}, RequestsMustNotExceedLimitMessage),
 			},
 		},
 		"invalid workload; multiple PodSet has invalid initContainers and containers": {

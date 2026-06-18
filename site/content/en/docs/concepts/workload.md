@@ -81,18 +81,24 @@ Kueue uses the `podSets` resources requests to calculate the quota used by a Wor
 
 Kueue calculates the total resources usage for a Workload as the sum of the resource requests for each `podSet`. The resource usage of a `podSet` is equal to the resource requests of the pod spec multiplied by the `count`.
 
+#### Pod-level resources
+
+When the [`PodLevelResources`](https://kubernetes.io/docs/concepts/workloads/pods/#pod-level-resources) feature is enabled in the cluster (Kubernetes 1.32+), a pod may declare CPU and memory requests and limits at the pod level via `pod.spec.resources` instead of, or in addition to, the per-container requests. Kueue accounts for these pod-level requests when computing a Workload's quota usage, and the requests-value adjustment and validation described below apply to `pod.spec.resources` as well as to container resources.
+
 #### Requests values adjustment
 
 Depending on the cluster setup, Kueue will adjust the resource usage of a Workload based on:
 
 - The cluster defines default values in [Limit Ranges](https://kubernetes.io/docs/concepts/policy/limit-range/), the default values will be used if not provided in the `spec`.
 - The created pods are subject of a [Runtime Class Overhead](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/).
-- The spec defines only resource limits, case in which the limit values will be treated as requests.
+- The spec defines only resource limits, case in which the limit values will be treated as requests. This also applies to limits set at the pod level via `pod.spec.resources`.
 
 #### Requests values validation
 
 In cases when the cluster defines Limit Ranges, the values resulting from the adjustment above will be validated against the ranges.
 Kueue will mark the workload as `Inadmissible` if the range validation fails.
+
+Kueue also validates that resource requests do not exceed their limits, both for individual containers and for pod-level resources declared in `pod.spec.resources`.
 
 #### Reserved resource names
 

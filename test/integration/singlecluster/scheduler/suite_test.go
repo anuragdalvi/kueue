@@ -68,7 +68,8 @@ func TestScheduler(t *testing.T) {
 
 var _ = ginkgo.BeforeSuite(func() {
 	fwk = &framework.Framework{
-		WebhookPath: util.WebhookPath,
+		WebhookPath:           util.WebhookPath,
+		APIServerFeatureGates: []string{"PodLevelResources=true"},
 	}
 	cfg = fwk.Init()
 	ctx, k8sClient = setupInterceptedClient()

@@ -34,9 +34,7 @@ import (
 	"sigs.k8s.io/kueue/pkg/util/resource"
 )
 
-var (
-	PodSetsPath = field.NewPath("spec").Child("podSets")
-)
+var PodSetsPath = field.NewPath("spec").Child("podSets")
 
 const (
 	RequestsMustNotExceedLimitMessage = "requests must not exceed its limits"
@@ -92,6 +90,12 @@ func handlePodLimitRange(ctx context.Context, cl client.Client, wl *kueue.Worklo
 			res.Limits = resource.MergeResourceListKeepFirst(res.Limits, containerLimits.Default)
 			res.Requests = resource.MergeResourceListKeepFirst(res.Requests, containerLimits.DefaultRequest)
 		}
+		// Pod-level resources (KEP-2837) are an optional pointer, only set when the
+		// PodLevelResources feature is enabled and used.
+		if pod.Resources != nil {
+			pod.Resources.Limits = resource.MergeResourceListKeepFirst(pod.Resources.Limits, containerLimits.Default)
+			pod.Resources.Requests = resource.MergeResourceListKeepFirst(pod.Resources.Requests, containerLimits.DefaultRequest)
+		}
 	}
 	return nil
 }
@@ -112,6 +116,11 @@ func UseLimitsAsMissingRequestsInPod(pod *corev1.PodSpec) {
 	for ci := range pod.Containers {
 		res := &pod.Containers[ci].Resources
 		res.Requests = resource.MergeResourceListKeepFirst(res.Requests, res.Limits)
+	}
+	// Pod-level resources (KEP-2837) are an optional pointer, only set when the
+	// PodLevelResources feature is enabled and used.
+	if pod.Resources != nil {
+		pod.Resources.Requests = resource.MergeResourceListKeepFirst(pod.Resources.Requests, pod.Resources.Limits)
 	}
 }
 
@@ -154,6 +163,17 @@ func ValidateResources(wi *Info) field.ErrorList {
 				allErrors = append(
 					allErrors,
 					field.Invalid(podSpecPath.Child("containers").Index(i), resNames, RequestsMustNotExceedLimitMessage),
+				)
+			}
+		}
+
+		// Pod-level resources (KEP-2837) are an optional pointer, only set when the
+		// PodLevelResources feature is enabled and used.
+		if podResources := ps.Template.Spec.Resources; podResources != nil {
+			if resNames := resources.NewRequests(podResources.Requests).GreaterKeys(resources.NewRequests(podResources.Limits)); len(resNames) > 0 {
+				allErrors = append(
+					allErrors,
+					field.Invalid(podSpecPath.Child("resources"), resNames, RequestsMustNotExceedLimitMessage),
 				)
 			}
 		}
