@@ -1326,6 +1326,7 @@ func (r *WorkloadReconciler) Update(e event.TypedUpdateEvent[*kueue.Workload]) b
 		switch {
 		case onHold:
 			log.V(2).Info("Skipping queue update for workload on hold")
+			r.queues.DeleteWorkload(log, wlKey)
 		case dra.NeedsDRAReconcile(e.ObjectNew, r.draBackedResources):
 			log.V(2).Info("Skipping queue update for DRA workload - handled in Reconcile")
 		default:

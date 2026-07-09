@@ -458,7 +458,9 @@ func TestUpdateSkipsRequeueForOnHoldWorkload(t *testing.T) {
 	cl := utiltesting.NewClientBuilder().Build()
 	recorder := &utiltesting.EventRecorder{}
 	cqCache := schdcache.New(cl)
-	qManager := qcache.NewManagerForUnitTests(cl, cqCache, qcache.WithClock(fakeClock))
+	qManager := qcache.NewManagerForUnitTests(cl, cqCache,
+		qcache.WithClock(fakeClock),
+		qcache.WithPreemptionExpectations(preemptexpectations.New()))
 	reconciler := NewWorkloadReconciler(cl, qManager, cqCache, recorder)
 
 	ctx, _ := utiltesting.ContextWithLog(t)
@@ -485,6 +487,59 @@ func TestUpdateSkipsRequeueForOnHoldWorkload(t *testing.T) {
 
 	if heads := qManager.Heads(headsCtx); len(heads) != 0 {
 		t.Fatalf("expected no second-pass workloads, got %d", len(heads))
+	}
+}
+
+func TestUpdateRemovesStaleQueueEntryForOnHoldWorkload(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	fakeClock := testingclock.NewFakeClock(now)
+
+	oldWl := utiltestingapi.MakeWorkload("wl", "ns").
+		Queue("lq").
+		Active(true).
+		Request(corev1.ResourceCPU, "1").
+		Obj()
+	newWl := utiltestingapi.MakeWorkload("wl", "ns").
+		Queue("lq").
+		Active(true).
+		Request(corev1.ResourceCPU, "1").
+		Condition(metav1.Condition{
+			Type:    kueue.WorkloadQuotaReserved,
+			Status:  metav1.ConditionFalse,
+			Reason:  kueue.WorkloadOnHold,
+			Message: "StatefulSet scaled to zero; workload on hold",
+		}).
+		Obj()
+
+	cl := utiltesting.NewClientBuilder().Build()
+	recorder := &utiltesting.EventRecorder{}
+	cqCache := schdcache.New(cl)
+	qManager := qcache.NewManagerForUnitTests(cl, cqCache,
+		qcache.WithClock(fakeClock),
+		qcache.WithPreemptionExpectations(preemptexpectations.New()))
+	reconciler := NewWorkloadReconciler(cl, qManager, cqCache, recorder)
+
+	ctx, log := utiltesting.ContextWithLog(t)
+
+	setupClusterQueue(ctx, t, cl, qManager, cqCache, utiltestingapi.MakeClusterQueue("cq").Obj(), false)
+	setupLocalQueue(ctx, t, cl, qManager, utiltestingapi.MakeLocalQueue("lq", "ns").ClusterQueue("cq").Obj(), false)
+
+	if err := qManager.AddOrUpdateWorkload(log, oldWl); err != nil {
+		t.Fatalf("AddOrUpdateWorkload() error = %v", err)
+	}
+	if pending := qManager.PendingWorkloadsInfo("cq"); len(pending) != 1 {
+		t.Fatalf("expected one pending workload before update, got %d", len(pending))
+	}
+
+	if got := reconciler.Update(event.TypedUpdateEvent[*kueue.Workload]{
+		ObjectOld: oldWl,
+		ObjectNew: newWl,
+	}); !got {
+		t.Fatalf("Update() = %v, want true", got)
+	}
+
+	if pending := qManager.PendingWorkloadsInfo("cq"); len(pending) != 0 {
+		t.Fatalf("expected no workloads in pending queue, got %d", len(pending))
 	}
 }
 
